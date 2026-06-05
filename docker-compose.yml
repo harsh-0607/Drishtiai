@@ -5,13 +5,14 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DB: drishti
       REDIS_URL: redis://redis:6379/0
       FRONTEND_ORIGINS: http://localhost:5173
     ports:
       - "8000:8000"
     depends_on:
-      - mongo
+      - mongodb
       - redis
 
   frontend:
@@ -22,10 +23,13 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
     ports:
       - "5173:5173"
+    environment:
+      # Vite can read this if you later switch to explicit backend URL usage
+      VITE_BACKEND_URL: http://localhost:8000
     depends_on:
       - backend
 
-  mongo:
+  mongodb:
     image: mongo:7
     ports:
       - "27017:27017"
