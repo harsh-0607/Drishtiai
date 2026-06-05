@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import time
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 
 class SceneRequest(BaseModel):
-    """Request model for scene description."""
-
     image: str = Field(..., description="Base64-encoded JPEG image (can be data URL)")
-    language: str = Field(default="hi", description="Language code (hi, en, ta, te, ...) ")
+    language: str = Field(default="hi")
 
 
 class SceneResponse(BaseModel):
-    """Response model for scene description."""
-
     description: str
     language: str
     processing_time_ms: Optional[int] = None
@@ -52,3 +47,44 @@ class FaceRecognizeResponse(BaseModel):
     found: bool
     name: Optional[str] = None
     distance: Optional[float] = None
+
+
+class SpeechTranscribeRequest(BaseModel):
+    audio: str = Field(..., description="Base64 encoded audio (webm/wav/mp3)")
+    language: Optional[str] = Field(default=None, description="Optional hint")
+
+
+class SpeechTranscribeResponse(BaseModel):
+    text: str
+    detected_language: Optional[str] = None
+
+
+class SpeechTTSRequest(BaseModel):
+    text: str
+    language: str = "hi"
+
+
+class SpeechTTSResponse(BaseModel):
+    audio_base64: str
+    language: str
+
+
+class NavigateRequest(BaseModel):
+    image: str
+
+
+class Obstacle(BaseModel):
+    object: str
+    confidence: float
+    position: str
+    distance: str
+
+
+class NavigateResponse(BaseModel):
+    obstacles: list[Obstacle]
+
+
+class StreamMessage(BaseModel):
+    type: str
+    message: Any
+    language: Optional[str] = None

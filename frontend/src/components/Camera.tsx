@@ -2,27 +2,34 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
-type SceneResponse =
-  | { status: "success"; text: string }
-  | { status: "error"; text?: string };
+type StreamMsg =
+  | { type: "scene"; message: string; language?: string }
+  | { type: "obstacle"; message: { obstacles: any[] } }
+  | { type: "face"; message: any };
 
 export interface CameraProps {
-  /** Optional language code (e.g. 'hi', 'en'). Defaults to 'hi'. */
   language?: string;
-  /** Called when a new scene description arrives. */
+  userId?: string;
+  mode?: "scene" | "stream";
   onSceneText?: (text: string) => void;
+  onStreamMessage?: (msg: StreamMsg) => void;
 }
 
 const FPS = 2;
 const INTERVAL_MS = 1000 / FPS;
 
 function getWsUrl(path: string) {
-  // Support localhost dev and https production.
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}${path}`;
 }
 
-export default function Camera({ language = "hi", onSceneText }: CameraProps) {
+export default function Camera({
+  language = "hi",
+  userId,
+  mode = "stream",
+  onSceneText,
+  onStreamMessage,
+}: CameraProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -35,12 +42,14 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
 
   const wsUrl = useMemo(() => {
     const params = new URLSearchParams({ language });
-    return getWsUrl(`/ws/scene?${params.toString()}`);
-  }, [language]);
+    if (userId) params.set("user_id", userId);
+
+    const endpoint = mode === "scene" ? "/ws/scene" : "/ws/stream";
+    return getWsUrl(`${endpoint}?${params.toString()}`);
+  }, [language, userId, mode]);
 
   useEffect(() => {
     let cancelled = false;
-
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -51,21 +60,16 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
             height: { ideal: 720 },
           },
         });
-
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-
         streamRef.current = stream;
         const video = videoRef.current;
         if (!video) return;
-
         video.srcObject = stream;
-        // iOS Safari needs these for inline playback.
         video.playsInline = true;
         video.muted = true;
-
         await video.play();
       } catch (err) {
         console.error(err);
@@ -74,20 +78,16 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
         );
       }
     }
-
-    startCamera();
-
+    void startCamera();
     return () => {
       cancelled = true;
     };
   }, []);
 
   useEffect(() => {
-    // WebSocket setup
     const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
-
     setWsStatus("connecting");
 
     ws.onopen = () => setWsStatus("open");
@@ -96,13 +96,24 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
 
     ws.onmessage = (evt) => {
       try {
-        const data = JSON.parse(evt.data) as SceneResponse;
-        if (data.status === "success" && typeof data.text === "string") {
+        const data = JSON.parse(evt.data) as any;
+        if (data?.status === "success" && typeof data.text === "string") {
+          // /ws/scene format
           setLastText(data.text);
           onSceneText?.(data.text);
+          return;
+        }
+
+        if (data?.type) {
+          // /ws/stream format
+          if (data.type === "scene" && typeof data.message === "string") {
+            setLastText(data.message);
+            onSceneText?.(data.message);
+          }
+          onStreamMessage?.(data as StreamMsg);
         }
       } catch {
-        // Ignore non-JSON responses
+        // ignore
       }
     };
 
@@ -114,10 +125,9 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
       }
       wsRef.current = null;
     };
-  }, [wsUrl, onSceneText]);
+  }, [wsUrl, onSceneText, onStreamMessage]);
 
   useEffect(() => {
-    // Frame capture loop at 2fps
     function stopTimer() {
       if (timerRef.current != null) {
         window.clearInterval(timerRef.current);
@@ -130,7 +140,7 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (!video || video.readyState < 2) return; // HAVE_CURRENT_DATA
+      if (!video || video.readyState < 2) return;
       if (!canvas) return;
 
       const w = video.videoWidth || 640;
@@ -139,19 +149,16 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
 
       canvas.width = w;
       canvas.height = h;
-
       const ctx = canvas.getContext("2d", { alpha: false });
       if (!ctx) return;
 
       ctx.drawImage(video, 0, 0, w, h);
 
-      // Convert to JPEG blob (quality 0.7)
       const blob: Blob | null = await new Promise((resolve) =>
         canvas.toBlob(resolve, "image/jpeg", 0.7)
       );
       if (!blob) return;
 
-      // Send as raw binary
       try {
         const buf = await blob.arrayBuffer();
         ws.send(buf);
@@ -160,10 +167,8 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
       }
     }
 
-    // Start capturing only once camera is likely running.
     stopTimer();
     timerRef.current = window.setInterval(() => {
-      // Use a microtask boundary to keep UI responsive
       void sendFrame();
     }, INTERVAL_MS);
 
@@ -173,11 +178,9 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
   }, [wsStatus]);
 
   useEffect(() => {
-    // Cleanup: stop media tracks on unmount
     return () => {
       try {
-        const stream = streamRef.current;
-        stream?.getTracks().forEach((t) => t.stop());
+        streamRef.current?.getTracks().forEach((t) => t.stop());
       } finally {
         streamRef.current = null;
       }
@@ -186,12 +189,12 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
 
   return (
     <section
-      aria-label="Camera view and scene description"
+      aria-label="Camera view and assistant output"
       role="region"
       style={{ display: "grid", gap: 12 }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <div aria-label="WebSocket connection status" role="status">
+        <div aria-label="Connection status" role="status">
           Connection: {wsStatus}
         </div>
       </div>
@@ -209,38 +212,32 @@ export default function Camera({ language = "hi", onSceneText }: CameraProps) {
         style={{ width: "100%", maxHeight: 420, background: "#000" }}
       />
 
-      {/* Offscreen canvas for frame capture */}
-      <canvas
-        ref={canvasRef}
-        aria-hidden="true"
-        style={{ display: "none" }}
-      />
+      <canvas ref={canvasRef} aria-hidden="true" style={{ display: "none" }} />
 
       <div
         role="status"
         aria-live="polite"
-        aria-label="Latest scene description"
-        style={{ fontSize: 16, lineHeight: 1.4 }}
+        aria-label="Latest assistant message"
+        style={{ fontSize: 18, lineHeight: 1.5 }}
       >
-        {lastText || "Waiting for description…"}
+        {lastText || "Waiting for response…"}
       </div>
 
       <button
         type="button"
-        aria-label="Replay last description"
+        aria-label="Replay last message"
         onClick={() => {
           if (!lastText) return;
           try {
-            const utterance = new SpeechSynthesisUtterance(lastText);
-            // Best-effort language
-            utterance.lang = language;
+            const u = new SpeechSynthesisUtterance(lastText);
+            u.lang = language;
             window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(utterance);
+            window.speechSynthesis.speak(u);
           } catch {
             // ignore
           }
         }}
-        style={{ padding: 12, fontSize: 16 }}
+        style={{ padding: 16, fontSize: 18, minHeight: 60 }}
       >
         Replay
       </button>

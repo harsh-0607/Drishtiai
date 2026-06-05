@@ -5,14 +5,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# System deps for face_recognition/dlib builds are heavy; for demo we include basics.
-# You may need to expand these for your target platform.
+# deps for pytesseract and some wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
+    ffmpeg \
+    tesseract-ocr \
     libgl1 \
     libglib2.0-0 \
-    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /app/requirements.txt

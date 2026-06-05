@@ -12,12 +12,26 @@ opencv-python-headless==4.10.0.84
 easyocr==1.7.2
 pytesseract==0.3.13
 
+# YOLO
+ultralytics==8.3.10
+
+# Speech
+gTTS==2.5.3
+edge-tts==6.1.12
+faster-whisper==1.0.3
+
 # Mongo
 motor==3.6.0
 pymongo==4.9.1
 
 # Redis cache
 redis==5.0.8
+
+# Auth
+firebase-admin==6.5.0
+
+# Rate limiting
+aio-limiter==0.1.0
 
 # Face recognition + numeric
 numpy==2.0.2
