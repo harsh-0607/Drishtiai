@@ -6,9 +6,18 @@ pydantic==2.9.2
 # AI / Gemini
 google-genai==0.5.0
 
+# OCR
+pillow==10.4.0
+opencv-python-headless==4.10.0.84
+easyocr==1.7.2
+pytesseract==0.3.13
+
 # Mongo
 motor==3.6.0
 pymongo==4.9.1
+
+# Redis cache
+redis==5.0.8
 
 # Face recognition + numeric
 numpy==2.0.2
@@ -16,3 +25,8 @@ face_recognition==1.3.0
 
 # Optional: load .env locally
 python-dotenv==1.0.1
+
+# Testing
+pytest==8.3.2
+pytest-asyncio==0.23.8
+httpx==0.27.2
