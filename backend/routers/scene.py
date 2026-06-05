@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -36,19 +37,18 @@ async def ws_scene(
     - Designed for 2fps input from the client.
     - Uses a non-blocking frame skipping strategy: if processing exceeds 0.5s,
       incoming frames are dropped while the loop is busy.
+
+    Implementation detail:
+    We keep a single-slot buffer (latest_frame). The reader loop overwrites it,
+    so when processing is slow, intermediate frames are naturally dropped.
     """
 
     await websocket.accept()
     client = getattr(websocket, "client", None)
     logger.info("/ws/scene connected client=%s language=%s", client, language)
 
-    # Single-slot buffer: newest frame wins. This prevents unbounded buffering.
     latest_frame: Optional[bytes] = None
-
-    # Event signals that a new frame arrived.
     new_frame_event = asyncio.Event()
-
-    # Used to coordinate read loop and processing loop.
     closed = asyncio.Event()
 
     async def reader_loop() -> None:
@@ -61,12 +61,8 @@ async def ws_scene(
 
                 frame = msg.get("bytes")
                 if not frame:
-                    # Ignore non-binary messages (or empty frames)
                     continue
 
-                # Non-blocking frame skipping:
-                # If processing is busy (event already set and frame not yet consumed),
-                # just replace the latest frame; this effectively drops intermediate frames.
                 latest_frame = frame
                 new_frame_event.set()
         except WebSocketDisconnect:
@@ -95,21 +91,17 @@ async def ws_scene(
                 start = time.perf_counter()
                 try:
                     text = await gemini_service.describe_scene(frame, language)
-                    payload = {"status": "success", "text": text}
-                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    await websocket.send_text(
+                        json.dumps({"status": "success", "text": text}, ensure_ascii=False)
+                    )
                 except Exception:
                     logger.exception("/ws/scene processing error client=%s", client)
                     # Keep connection alive, but inform client.
                     await websocket.send_text(
-                        json.dumps(
-                            {"status": "error", "text": ""},
-                            ensure_ascii=False,
-                        )
+                        json.dumps({"status": "error", "text": ""}, ensure_ascii=False)
                     )
 
                 elapsed = time.perf_counter() - start
-                # If processing took too long, we intentionally do nothing special here;
-                # the reader loop keeps only a single latest frame, so frames are dropped.
                 if elapsed > 0.5:
                     logger.debug(
                         "/ws/scene slow frame processing=%.3fs client=%s (dropping intermediate frames)",
@@ -122,14 +114,14 @@ async def ws_scene(
     reader_task = asyncio.create_task(reader_loop())
     processor_task = asyncio.create_task(processing_loop())
 
-    # Wait for either task to finish (disconnect / error)
-    done, pending = await asyncio.wait(
-        {reader_task, processor_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-
-    for task in pending:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
+    try:
+        await asyncio.wait(
+            {reader_task, processor_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        closed.set()
+        for task in (reader_task, processor_task):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
